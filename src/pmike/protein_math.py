@@ -14,12 +14,16 @@ three_to_one = {
     'SEC': 'U', 'PYL': 'O'  # Add rare amino acids if needed
 }
 
-def get_geometric_CA_center(df):
-    df_CA=df.loc[df["atname"]=="CA"][['x','y','z']]
+def get_geometric_CA_center(df,segments=None):
+    if type(segments) != type(None):
+        #print(segments)
+        df_CA=df.loc[(df["atname"]=="CA") & (df["segid"].isin(segments))][['x','y','z']]
+    else:
+        df_CA=df.loc[df["atname"]=="CA"][['x','y','z']]
     return df_CA.sum(axis=0)/df_CA.shape[0]
 
-def center_by_CA(df):
-    center_current=get_geometric_CA_center(df)
+def center_by_CA(df,segments=None):
+    center_current=get_geometric_CA_center(df,segments)
     #print(center_current)
     df[['x','y','z']]-=center_current
     #return df
@@ -44,6 +48,7 @@ def extract_sequence(df, chainid):
 
     # Convert the 'resname' to one-letter codes using the mapping dictionary
     sequence = ''.join(three_to_one.get(res, 'X') for res in filtered_df)
+    #print(sequence)
     return sequence
 
 def map_chains(df1,df2):
@@ -107,49 +112,60 @@ def different_sequence_RMSD(df1,df2,mapper=None):
 
     alignment_df.index1+=1 #Residue number starts count at 1
     alignment_df.index2+=1
-   #print('alignment_df:\n',alignment_df.head())
-   #print('df1 B:\n',df1.loc[df1['segid']=='B'][['segid','resnum']])
+
+    #alignment_df.to_csv('alignment_df.csv')
+    #print('alignment_df:\n',alignment_df.head())
+    #print('df1 B:\n',df1.loc[df1['segid']=='B'][['segid','resnum']])
     # Perform an inner join between df1 and alignment_df based on segid and resnum = index1
-    df1_filtered = pd.merge(df1, alignment_df, how='inner', left_on=['segid', 'resnum'], right_on=['segid1', 'index1'],suffixes=['','_r'])
-    df2_filtered = pd.merge(df2, alignment_df, how='inner', left_on=['segid', 'resnum'], right_on=['segid2', 'index2'],suffixes=['','_r'])
+    df1_filtered = pd.merge(df1, alignment_df, how='outer', left_on=['segid', 'resnum'], right_on=['segid1', 'index1'],suffixes=['','_r'])
+    df2_filtered = pd.merge(df2, alignment_df, how='outer', left_on=['segid', 'resnum'], right_on=['segid2', 'index2'],suffixes=['','_r'])
 
     # Drop unnecessary columns if needed (like 'segid' and 'index1' after the merge)
     df1_filtered.rename(columns={'index1': 'alignment_index'}, inplace=True)
-    df2_filtered.rename(columns={'index2': 'alignment_index'}, inplace=True)
+    df2_filtered.rename(columns={'index1': 'alignment_index'}, inplace=True)
 
     df1_filtered = df1_filtered.drop(columns=['index2', 'segid1','segid2']).reset_index(drop=True)
-    df2_filtered = df2_filtered.drop(columns=['index1', 'segid1','segid2']).reset_index(drop=True)
+    df2_filtered = df2_filtered.drop(columns=['segid1','segid2']).reset_index(drop=True)
+    #print('df2_filtered shape: ',df2_filtered.shape)
    #print('df1_filtered:\n',df1_filtered.head())
 
-    center_by_CA(df1_filtered)
+    center_by_CA(df1_filtered,map_df['R0'].unique())
    #print('df1_filtered (centered):\n',df1_filtered.head())
-    center_by_CA(df2_filtered)
+    center_by_CA(df2_filtered,map_df['R1'].unique())
+    print('centered both dataframes, about to do gradient align')
 
-    return gradient_align(df1_filtered,df2_filtered,map_df),df1_filtered,df2_filtered
+    return kabsch_align(df1_filtered,df2_filtered,map_df),df1_filtered,df2_filtered
 
 
 
+
+def merge_CA_dataframes(df0,df1,map_df):
+    df0_CA=df0.loc[df0["atname"]=="CA"]
+    df1_CA=df1.loc[df1["atname"]=="CA"]
+
+    df_mid=pd.merge(df0_CA, map_df, left_on="segid",right_on="R0",how="inner")
+    if 'alignment_index' in df1_CA.keys():
+        df2=pd.merge(df_mid,df1_CA,left_on=["alignment_index","R1"],right_on=["alignment_index","segid"],how="inner",suffixes=["_l","_r"])
+    else:
+        df2=pd.merge(df_mid,df1_CA,left_on=["resnum","R1"],right_on=["resnum","segid"],how="inner",suffixes=["_l","_r"])
+    return df2
 
 # Assumes both dataframes are centered
 def get_CA_RMSD(df0,df1,map_df=None,whitelist_region=None):
     if map_df is None:
         map_df = relational(map_chains(template_struct,modify_struct))
 
-    df0_CA=df0.loc[df0["atname"]=="CA"]
-    df1_CA=df1.loc[df1["atname"]=="CA"]
+    df2 = merge_CA_dataframes(df0,df1,map_df)
 
-    df_mid=pd.merge(df0_CA, map_df, left_on="segid",right_on="R0",how="inner")
-    if 'alignment_index' in df0_CA.keys():
-        df2=pd.merge(df_mid,df1_CA,left_on=["alignment_index","R1"],right_on=["alignment_index","segid"],how="inner",suffixes=["_l","_r"])
-    else:
-        df2=pd.merge(df_mid,df1_CA,left_on=["resnum","R1"],right_on=["resnum","segid"],how="inner",suffixes=["_l","_r"])
     df2['dx']=df2.x_l-df2.x_r
     df2['dy']=df2.y_l-df2.y_r
     df2['dz']=df2.z_l-df2.z_r
+    #map_df.to_csv('map_df.csv')
+    #df2.to_csv('RMSD_df2.csv')
     diffs = df2[['dx','dy','dz']]
 
     # Compute individual RMSD for each group (R0, R1)
-    grouped_rmsd = df2.groupby(['R0', 'R1']).apply(lambda group: np.sqrt(np.mean(np.sum(group[['dx', 'dy', 'dz']]**2, axis=1))))
+    grouped_rmsd = df2.groupby(['R0', 'R1']).apply(lambda group: np.sqrt(np.mean(np.sum(np.square(group[['dx', 'dy', 'dz']]), axis=1))))
 
     # Update the map_df with RMSD values
     map_df = map_df.set_index(['R0', 'R1'])  # Ensure map_df has R0 and R1 as index
@@ -189,37 +205,34 @@ def rotation_matrix(axis, theta):
                      [2 * (bc - ad), aa + cc - bb - dd, 2 * (cd + ab)],
                      [2 * (bd + ac), 2 * (cd - ab), aa + dd - bb - cc]])
 
-def gradient_align(template_struct, modify_struct, map_df=None, alpha=0.01, tolerance=1e-6, max_iterations=1000,epsilon=1e-6,whitelist_region=None):
-   #print('template_struct (gradient align):\n',template_struct.head())
+def kabsch_align(template_struct, modify_struct, map_df=None):
     if map_df is None:
         map_df = relational(map_chains(template_struct,modify_struct))
 
-    current_rmsd = get_CA_RMSD(template_struct, modify_struct, map_df, whitelist_region)[0]
-    prev_rmsd = float('inf')
-    axes = [np.array([1,0,0]), np.array([0,1,0]), np.array([0,0,1])]
-    iteration = 0
+    df_merge = merge_CA_dataframes(template_struct,modify_struct,map_df)
+    template_coords = df_merge[['x_l', 'y_l', 'z_l']].to_numpy()
+    modify_coords = df_merge[['x_r', 'y_r', 'z_r']].to_numpy()
 
-    while iteration != max_iterations and abs(prev_rmsd - current_rmsd) > tolerance:
-        gradient = np.zeros(3)
-        for i,axis in enumerate(axes):
-            perturbed_structure = modify_struct.copy()
-            rot_matrix = rotation_matrix(axis,epsilon)
-            perturbed_structure[['x','y','z']]=perturbed_structure[['x','y','z']].dot(rot_matrix)
-            perturbed_rmsd = get_CA_RMSD(template_struct, perturbed_structure,map_df, whitelist_region)[0]
-            gradient[i] = (perturbed_rmsd - current_rmsd) / epsilon
+    # Center the matched points by their centroids
+    centroid_template = np.mean(template_coords, axis=0)
+    centroid_modify = np.mean(modify_coords, axis=0)
+    centered_template_coords = template_coords - centroid_template
+    centered_modify_coords = modify_coords - centroid_modify
 
-        for i,axis in enumerate(axes):
-            rot_matrix = rotation_matrix(axis,-alpha * gradient[i])
-            modify_struct[['x','y','z']]=modify_struct[['x','y','z']].dot(rot_matrix)
+    # Compute the covariance matrix and SVD
+    covariance_matrix = np.dot(centered_modify_coords.T, centered_template_coords)
+    V, S, Wt = np.linalg.svd(covariance_matrix)
+    d = np.sign(np.linalg.det(np.dot(V, Wt)))
+    rotation_matrix = np.dot(V, np.dot(np.diag([1, 1, d]), Wt))
 
-        prev_rmsd=current_rmsd
-        current_rmsd = get_CA_RMSD(template_struct, modify_struct,map_df, whitelist_region)[0]
-        iteration+=1
-        #logging.info('Iteration '+str(iteration)+': RMSD = '+str(current_rmsd))
-        #print('Iteration '+str(iteration)+': RMSD = '+str(current_rmsd))
+    # Apply the transformation (rotation + translation) to all atoms in modify_struct
+    all_modify_coords = modify_struct[['x', 'y', 'z']].to_numpy() - centroid_modify
+    aligned_coords = np.dot(all_modify_coords, rotation_matrix) + centroid_template
+    modify_struct[['x', 'y', 'z']] = aligned_coords
 
-    return get_CA_RMSD(template_struct, modify_struct,map_df, whitelist_region)
-    #return current_rmsd,map_df # Structy1 does get modified, so there's no need to return it.
+    # Calculate the final RMSD using only the matched Cα atoms
+    final_rmsd = get_CA_RMSD(template_struct, modify_struct, map_df)
+    return final_rmsd
 
 def align_all_structures(project,whitelist_region=None):
     if project[-1]!='/':
@@ -235,7 +248,7 @@ def align_all_structures(project,whitelist_region=None):
     for i in pdblist[1:]:
         df1 = pdbio.read_pdb(project+i)
         center_by_CA(df1)
-        gradient_align(df0,df1)
+        kabsch_align(df0,df1)
         print(pdblist[0]+' + '+i+' RMSD:\t',get_CA_RMSD(df0,df1))
         pdbio.write_pdb(df1,project+i[:-4]+'_aligned.pdb')
 
