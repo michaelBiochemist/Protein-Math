@@ -6,10 +6,14 @@ from datetime import datetime
 from Bio.PDB.MMCIF2Dict import MMCIF2Dict
 import sys
 import os
+
+#from Bio.PDB import Structure, Model, Chain, Residue, Atom, MMCIFIO
+#from Bio.PDB.PDBParser import PDBParser
+#from Bio.PDB.Polypeptide import three_to_index
+#import pandas as pd
 """
 PDB TOOLS
 Created by Michael van Dyk on 07/19/2024
-Last modified: 07/19/2024
 
  Reference PDB column spec described here:
  https://www.cgl.ucsf.edu/chimera/docs/UsersGuide/tutorials/pdbintro.html
@@ -51,20 +55,35 @@ crd_spec = { # Columns specification for CHARMM extended CRD files
      "resnum": ["num",(112,126),1],
      "tfactor": ["num",(125,140),0]
      }
+def clean_coordinate_df(df,filetype=None):
+    if filetype=='PDB':
+        mask = df['inscode'].astype(str).str.isdigit()
+        df.loc[mask,'resnum']=df.loc[mask,'resnum']*10+df.loc[mask,'inscode'].astype(int)
+        df.loc[mask,'inscode'] = nan
 
-# Reads PDB into dataframe
-def read_pdb(pdbfil):
-    df = read_coordinate_file(pdbfil, pdb_spec)
-    mask = df['inscode'].astype(str).str.isdigit()
-    df.loc[mask,'resnum']=df.loc[mask,'resnum']*10+df.loc[mask,'inscode'].astype(int)
-    df.loc[mask,'inscode'] = nan
     segids = df.segid.unique()
     chainids = df.chainid.unique()
+
     if len(segids)==1 and pd.isnull(segids[0]) and (len(chainids)!=1 or not pd.isnull(chainids[0])):
         df.segid=df.chainid
 
-    grouped = df.groupby('segid')['resnum'].transform('min')
-    df['resnum'] = df['resnum'] - grouped.where(grouped > 1, 0) + 1
+    df['resnum']=df.groupby('segid')['resnum'].transform(lambda x: pd.factorize(x)[0] + 1)
+
+    return df
+
+# Reads PDB into dataframe
+def read_coordinates(file_name):
+    return read_coord(file_name)
+def read_coord(file_name):
+    read_spec = {'.PDB':read_pdb,
+            '.CIF':read_cif,
+            '.CRD':read_crd}
+    return read_spec[file_name[-4:].upper()](file_name)
+
+
+def read_pdb(pdbfil):
+    df = read_coordinate_file(pdbfil, pdb_spec)
+    df = clean_coordinate_df(df,'PDB')
     return df
 
 def read_pdb_directory(directory):
@@ -75,7 +94,7 @@ def read_pdb_directory(directory):
     return pdbs
 
 def read_crd(crdfil):
-    return read_coordinate_file(crdfil, crd_spec)
+    return clean_coordinate_df(read_coordinate_file(crdfil, crd_spec),'CRD')
 
 def read_cif(cif_file):
     # Parse the CIF file into a dictionary
@@ -102,12 +121,11 @@ def read_cif(cif_file):
     df = pd.DataFrame(data)
 
     # Convert numeric columns to appropriate types
-    df["_atom_site.Cartn_x"] = pd.to_numeric(df["_atom_site.Cartn_x"])
-    df["_atom_site.Cartn_y"] = pd.to_numeric(df["_atom_site.Cartn_y"])
-    df["_atom_site.Cartn_z"] = pd.to_numeric(df["_atom_site.Cartn_z"])
-    df["_atom_site.label_seq_id"] = pd.to_numeric(df["_atom_site.label_seq_id"], errors='coerce')
-    df["_atom_site.occupancy"] = pd.to_numeric(df["_atom_site.occupancy"])
-    df["_atom_site.pdbx_formal_charge"] = pd.to_numeric(df["_atom_site.pdbx_formal_charge"])
+    make_numeric_list = ["_atom_site.Cartn_x","_atom_site.Cartn_y","_atom_site.Cartn_z",
+        "_atom_site.label_seq_id","_atom_site.occupancy","_atom_site.pdbx_formal_charge","_atom_site.id"]
+    for make_numeric in make_numeric_list:
+        df[make_numeric] = pd.to_numeric(df[make_numeric],errors='coerce')
+
 
     # Rename columns for easier readability
     df.columns = [
@@ -116,6 +134,11 @@ def read_cif(cif_file):
     ]
     df["segid"]=df["chainid"]
     df["tfactor"]=nan
+    df["altloc"]=nan
+    df["inscode"]=''
+
+    df[["atnum","resnum"]] = df[["atnum","resnum"]].fillna(0).astype(int)
+    df = clean_coordinate_df(df,'CIF')
 
     return df
 
@@ -192,6 +215,103 @@ def write_pdb(df,pdbout='output.pdb',comments=''):
             i+=1
     else:
         write_coordinate_file(df,pdbout,comments,pdb_spec)
+
+
+def prepare_cif_dataframe(df):
+    # Select and rename columns to CIF-like format
+    df_cif = df.rename(columns={
+        'atnum': '_atom_site.id',
+        'atname': '_atom_site.label_atom_id',
+        'altloc': '_atom_site.label_alt_id',
+        'resname': '_atom_site.label_comp_id',
+        'chainid': '_atom_site.label_asym_id',
+        'resnum': '_atom_site.label_seq_id',
+        'x': '_atom_site.Cartn_x',
+        'y': '_atom_site.Cartn_y',
+        'z': '_atom_site.Cartn_z',
+        'occupancy': '_atom_site.occupancy',
+        'tfactor': '_atom_site.B_iso_or_equiv',
+        'segid': '_atom_site.auth_asym_id',
+        'element': '_atom_site.type_symbol',
+        'charge': '_atom_site.pdbx_formal_charge'
+    })
+
+    # Ensure correct data types and fill in missing data with defaults if needed
+    df_cif['_atom_site.occupancy'] = pd.to_numeric(df_cif['_atom_site.occupancy'], errors='coerce').fillna(1.0)
+    df_cif['_atom_site.B_iso_or_equiv'] = pd.to_numeric(df_cif['_atom_site.B_iso_or_equiv'], errors='coerce').fillna(0.0)
+
+    # Format necessary columns for CIF conventions, e.g., coordinates as floats with specified precision
+    for col in ['_atom_site.Cartn_x', '_atom_site.Cartn_y', '_atom_site.Cartn_z']:
+        df_cif[col] = df_cif[col].map('{:.3f}'.format)
+
+    return df_cif
+
+
+def df_to_structure(df, structure_id="structure"):
+    print('Not implemented yet')
+    '''
+    # Initialize a new structure
+    structure = Structure.Structure(structure_id)
+    model = Model.Model(0)  # Single model (Model ID = 0)
+    structure.add(model)
+
+    # Iterate over the DataFrame grouped by chain
+    for chain_id, chain_df in df.groupby('chainid'):
+        chain = Chain.Chain(chain_id)
+        model.add(chain)
+
+        for res_id, res_df in chain_df.groupby(['resnum', 'inscode']):
+            # Use residue name, resnum and inscode to identify residues uniquely
+            resname = res_df['resname'].iloc[0]
+            het_flag = " "  # Regular residues typically use " "
+            resnum = res_id[0]
+            inscode = res_id[1] if pd.notna(res_id[1]) else " "
+
+            # Initialize a Residue object
+            residue = Residue.Residue((het_flag, resnum, inscode), resname, chain_id)
+            chain.add(residue)
+
+            # Add atoms to the residue
+            for _, atom_row in res_df.iterrows():
+                atom = Atom.Atom(
+                    atom_row['atname'],
+                    [atom_row['x'], atom_row['y'], atom_row['z']],
+                    float(atom_row['tfactor']) if pd.notna(atom_row['tfactor']) else 0.0,
+                    float(atom_row['occupancy']) if pd.notna(atom_row['occupancy']) else 1.0,
+                    float(atom_row['altloc']) if pd.notna(atom_row['altloc']) else 0.0,
+                    atom_row['atname'],
+                    atom_row['atnum'],
+                    element=atom_row['element'].strip()
+                )
+                residue.add(atom)
+    return structure
+    '''
+
+def write_structure_to_cif(structure, filename):
+    print('not yet implemented')
+    '''
+    # Use Biopython's MMCIFIO class to write the structure as a .cif file
+    io = MMCIFIO()
+    io.set_structure(structure)
+    io.save(filename)
+    print(f"Structure written to CIF file: {filename}")
+    '''
+
+
+def write_cif(df_cif, filename):
+    print('Not yet implemented')
+    '''
+    # CIF files require headers and loop definitions
+    with open(filename, 'w') as f:
+        f.write("data_cif_generated\n\n")
+        f.write("loop_\n")
+        f.write(" " + "\n ".join(df_cif.columns) + "\n")
+
+        # Write all columns as CIF format rows (tab-delimited)
+        df_cif.to_csv(f, sep="\t", header=False, index=False)
+    print(f"CIF file saved as {filename}")
+    '''
+
 
 # Reads in PDB files that were split according to the format from the PDB writer.
 # This is for instances where there are >99,999 atoms or >9,999 residues
