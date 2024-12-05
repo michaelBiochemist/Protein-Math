@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 import pandas as pd
-import pdbio
+from pmike import pdbio
 import os
 import sys
 import numpy as np
