@@ -7,13 +7,14 @@ from Bio.PDB.MMCIF2Dict import MMCIF2Dict
 import sys
 import os
 
-#from Bio.PDB import Structure, Model, Chain, Residue, Atom, MMCIFIO
-#from Bio.PDB.PDBParser import PDBParser
-#from Bio.PDB.Polypeptide import three_to_index
-#import pandas as pd
+from Bio.PDB import Structure, Model, Chain, Residue, Atom, MMCIFIO
+from Bio.PDB.PDBParser import PDBParser
+from Bio.PDB.Polypeptide import three_to_index
+import pandas as pd
 """
 PDB TOOLS
 Created by Michael van Dyk on 07/19/2024
+Last modified: 07/19/2024
 
  Reference PDB column spec described here:
  https://www.cgl.ucsf.edu/chimera/docs/UsersGuide/tutorials/pdbintro.html
@@ -248,8 +249,6 @@ def prepare_cif_dataframe(df):
 
 
 def df_to_structure(df, structure_id="structure"):
-    print('Not implemented yet')
-    '''
     # Initialize a new structure
     structure = Structure.Structure(structure_id)
     model = Model.Model(0)  # Single model (Model ID = 0)
@@ -285,22 +284,16 @@ def df_to_structure(df, structure_id="structure"):
                 )
                 residue.add(atom)
     return structure
-    '''
 
 def write_structure_to_cif(structure, filename):
-    print('not yet implemented')
-    '''
     # Use Biopython's MMCIFIO class to write the structure as a .cif file
     io = MMCIFIO()
     io.set_structure(structure)
     io.save(filename)
     print(f"Structure written to CIF file: {filename}")
-    '''
 
 
 def write_cif(df_cif, filename):
-    print('Not yet implemented')
-    '''
     # CIF files require headers and loop definitions
     with open(filename, 'w') as f:
         f.write("data_cif_generated\n\n")
@@ -310,7 +303,6 @@ def write_cif(df_cif, filename):
         # Write all columns as CIF format rows (tab-delimited)
         df_cif.to_csv(f, sep="\t", header=False, index=False)
     print(f"CIF file saved as {filename}")
-    '''
 
 
 # Reads in PDB files that were split according to the format from the PDB writer.

@@ -325,23 +325,156 @@ def kabsch_align(template_struct, modify_struct, map_df=None,center_selection_cr
     final_rmsd = get_CA_RMSD(template_struct, modify_struct, map_df,debuggy=False)
     return final_rmsd
 
-def align_all_structures(project,whitelist_region=None):
-    if project[-1]!='/':
-        project+='/'
-    files = os.listdir(project)
-    pdblist = []
-    for ufile in files:
-        if ufile[-4:]=='.pdb':
-            pdblist.append(ufile)
-    df0 = pdbio.read_pdb(project+pdblist[0])
-    center_by_CA(df0)
-    pdbio.write_pdb(df0,project+pdblist[0][:-4]+'_centered.pdb')
-    for i in pdblist[1:]:
-        df1 = pdbio.read_pdb(project+i)
-        center_by_CA(df1)
-        kabsch_align(df0,df1)
-        print(pdblist[0]+' + '+i+' RMSD:\t',get_CA_RMSD(df0,df1))
-        pdbio.write_pdb(df1,project+i[:-4]+'_aligned.pdb')
+def calculate_chirality_proline_old(group):
+    # Extract coordinates for key atoms
+    try:
+        ca = group[group['atname'] == 'CA'][['x', 'y', 'z']].iloc[0].values
+        n = group[group['atname'] == 'N'][['x', 'y', 'z']].iloc[0].values
+        c = group[group['atname'] == 'C'][['x', 'y', 'z']].iloc[0].values
+        # Extract side-chain atoms for proline ring
+        ring_atoms = group[group['atname'].isin(['CD', 'CG', 'CB'])][['x', 'y', 'z']].values
+        ring_center = np.mean(ring_atoms, axis=0)  # Geometric center of the ring
+    except IndexError:
+        # Return None if key atoms are missing
+        return None
+
+    # Create vectors
+    v_nc = n - c
+    v_ca = ca - c
+    v_ring = ring_center - ca
+
+    # Calculate determinant
+    chirality = np.linalg.det([v_nc, v_ca, v_ring])
+
+    # Assign chirality
+    if chirality > 0:
+        return "L"
+    elif chirality < 0:
+        return "D"
+    else:
+        return None
+
+def calculate_chirality_proline(residue_df):
+    """
+    Calculate the chirality of proline residues using the CA-HA vector along with the N, CA, and C atoms.
+    Returns 'L' or 'D' if chirality can be determined, otherwise returns None if HA is missing.
+    """
+    # Select atoms for chirality check
+
+    # Get atom coordinates (N, CA, C, HA)
+    N = residue_df[residue_df['atname'] == 'N'][['x', 'y', 'z']].values
+    CA = residue_df[residue_df['atname'] == 'CA'][['x', 'y', 'z']].values
+    C = residue_df[residue_df['atname'] == 'C'][['x', 'y', 'z']].values
+    HA = residue_df[residue_df['atname'] == 'HA'][['x', 'y', 'z']].values
+
+    if len(HA) == 0:
+        # If HA is not present, return None
+        print(f'cannot calculate proline {residue_df["resnum"].min()} chirality as alpha H is missing')
+        return None
+
+    # Calculate vectors
+    N_CA = CA - N  # N-CA vector
+    CA_C = C - CA  # CA-C vector
+    CA_HA = HA - CA  # CA-HA vector
+
+    N_CA, CA_C, CA_HA = map(lambda v: v.flatten() if len(v.shape) > 1 else v, [N_CA, CA_C, CA_HA])
+
+    # Compute the cross product of N-CA and CA-C to get the normal vector
+    normal = np.cross(N_CA, CA_C)
+    # Calculate the scalar triple product of the normal vector with the CA-H vector
+    scalar_triple_product = np.dot(normal, CA_HA)
+
+    # Determine chirality (right-handed or left-handed)
+    if scalar_triple_product > 0:
+        return 'L'  # Left-handed (L-proline)
+    else:
+        return 'D'  # Right-handed (D-proline)
+
+def calculate_residue_chirality(residue_df):
+    if residue_df['resname'].iloc[0] == 'PRO':
+        return calculate_chirality_proline(residue_df)
+        #return None
+    # Extract coordinates for key atoms
+    try:
+        ca = residue_df[residue_df['atname'] == 'CA'][['x', 'y', 'z']].values[0]
+        n = residue_df[residue_df['atname'] == 'N'][['x', 'y', 'z']].values[0]
+        c = residue_df[residue_df['atname'] == 'C'][['x', 'y', 'z']].values[0]
+        cb = residue_df[residue_df['atname'] == 'CB'][['x', 'y', 'z']].values[0]
+    except IndexError:
+        # Skip if any key atom is missing
+        return None
+
+    # Create vectors from CA
+    v_n = n - ca
+    v_c = c - ca
+    v_cb = cb - ca
+
+    # Calculate determinant
+    chirality = np.linalg.det([v_n, v_c, v_cb])
+
+    # Assign chirality
+    if chirality > 0:
+        return "L"
+    elif chirality < 0:
+        return "D"
+    else:
+        print(f'error calculating residue {residue_df["resname"].min()} {residue_df["resnum"].min()} chirality')
+        return None
+def toggle_residue_chirality(residue_df):
+    """
+    Convert the chirality of a residue between L and D form by reflecting its side-chain atoms using vectorized operations.
+
+    Parameters:
+    residue_df (pd.DataFrame): Dataframe containing the residue's atom data.
+                               Columns: 'atname', 'x', 'y', 'z', etc.
+
+    Returns:
+    pd.DataFrame: A new dataframe with the modified chirality.
+    """
+    try:
+        # Extract backbone atom coordinates
+        ca = residue_df[residue_df['atname'] == 'CA'][['x', 'y', 'z']].iloc[0].values
+        n = residue_df[residue_df['atname'] == 'N'][['x', 'y', 'z']].iloc[0].values
+        c = residue_df[residue_df['atname'] == 'C'][['x', 'y', 'z']].iloc[0].values
+    except IndexError:
+        # Return None if any key backbone atom is missing
+        print(f'error toggling residue {residue_df["resname"]} {residue_df["resnum"]}')
+        return None
+
+    # Define the plane for reflection
+    v1 = n - ca  # Vector from CA to N
+    v2 = c - ca  # Vector from CA to C
+
+    # Normal vector to the plane (cross product of v1 and v2)
+    plane_normal = np.cross(v1, v2)
+    plane_normal /= np.linalg.norm(plane_normal)  # Normalize the normal vector
+
+    # Identify side-chain atoms (not part of the backbone)
+    side_chain_mask = ~residue_df['atname'].isin(['N', 'CA', 'C', 'O'])
+    side_chain_atoms = residue_df[side_chain_mask][['x', 'y', 'z']].values
+
+    # Vectorized reflection for all side-chain atoms
+    vec_to_atoms = side_chain_atoms - ca  # Vector from CA to each side-chain atom
+    projections = np.dot(vec_to_atoms, plane_normal)[:, np.newaxis] * plane_normal  # Projections onto the plane normal
+    reflected_coords = side_chain_atoms - 2 * projections  # Reflect through the plane
+
+    # Update the coordinates in the dataframe
+    reflected_residue = residue_df.copy()
+    reflected_residue.loc[side_chain_mask, ['x', 'y', 'z']] = reflected_coords
+
+    return reflected_residue
+
+def get_chirality(df):
+    chirality_series = (
+        df.groupby(['resnum', 'chainid'])
+        .apply(calculate_residue_chirality)
+        .reset_index(name='chirality')  # Convert output to a dataframe
+    )
+
+    # Merge chirality results back into the original dataframe
+    df = df.merge(chirality_series, on=['resnum', 'chainid'], how='left')
+    #df['chirality'] = df.groupby(['resnum', 'chainid']).apply(calculate_residue_chirality)
+    return df
 
 if __name__ == '__main__':
     align_all_structures(sys.argv[1])
