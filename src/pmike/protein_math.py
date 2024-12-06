@@ -473,8 +473,73 @@ def get_chirality(df):
 
     # Merge chirality results back into the original dataframe
     df = df.merge(chirality_series, on=['resnum', 'chainid'], how='left')
-    #df['chirality'] = df.groupby(['resnum', 'chainid']).apply(calculate_residue_chirality)
     return df
 
-if __name__ == '__main__':
-    align_all_structures(sys.argv[1])
+def assign_histidine_charge(df, cutoff=4.0):
+    """
+    Assigns protonation states to histidines based on proximity to charged residues.
+
+    Parameters:
+        df (pd.DataFrame): DataFrame containing PDB structure information.
+        cutoff (float): Distance cutoff in Ångströms to consider an interaction.
+
+    Returns:
+        pd.DataFrame: DataFrame with updated 'resname' for histidines.
+    """
+    charged_residues = {
+        'ASP': ['OD1', 'OD2'],
+        'GLU': ['OE1', 'OE2'],
+        'ARG': ['NH1', 'NH2', 'NE'],
+        'LYS': ['NZ']
+    }
+
+    # Identify histidines
+    histidines = df[df['resname'] == 'HIS']
+    updated_resnames = {}
+
+    for _, his_row in histidines.iterrows():
+        his_resnum = his_row['resnum']
+        chain = his_row['chainid']
+        nd1_coords = df[(df['resnum'] == his_resnum) &
+                        (df['chainid'] == chain) &
+                        (df['atname'] == 'ND1')][['x', 'y', 'z']].values
+        ne2_coords = df[(df['resnum'] == his_resnum) &
+                        (df['chainid'] == chain) &
+                        (df['atname'] == 'NE2')][['x', 'y', 'z']].values
+
+        if len(nd1_coords) == 0 or len(ne2_coords) == 0:
+            continue  # Skip if ND1 or NE2 is missing
+
+        nd1_coords = nd1_coords[0]
+        ne2_coords = ne2_coords[0]
+
+        # Check proximity to charged residues
+        interactions_nd1 = 0
+        interactions_ne2 = 0
+
+        for res, atoms in charged_residues.items():
+            charged_atoms = df[(df['resname'] == res) & (df['chainid'] == chain)]
+
+            for _, charged_atom in charged_atoms.iterrows():
+                charged_coords = charged_atom[['x', 'y', 'z']].values
+                dist_to_nd1 = np.linalg.norm(nd1_coords - charged_coords)
+                dist_to_ne2 = np.linalg.norm(ne2_coords - charged_coords)
+
+                if dist_to_nd1 < cutoff:
+                    interactions_nd1 += 1
+                if dist_to_ne2 < cutoff:
+                    interactions_ne2 += 1
+
+        # Assign charge based on proximity
+        if interactions_nd1 > interactions_ne2:
+            updated_resnames[(his_resnum, chain)] = 'HSE'  # NE2 protonated
+        else:
+            updated_resnames[(his_resnum, chain)] = 'HSD'  # ND1 protonated
+
+    # Update the DataFrame
+    for (resnum, chain), new_resname in updated_resnames.items():
+        df.loc[(df['resnum'] == resnum) & (df['chainid'] == chain), 'resname'] = new_resname
+
+    return df
+
+#if __name__ == '__main__':
