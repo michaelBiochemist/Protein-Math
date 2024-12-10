@@ -7,5 +7,8 @@ clean:
 
 install:
 	pip install --upgrade dist/pmike-$(ver)-*whl
+
+reinstall:
+	pip install --force-reinstall dist/pmike-$(ver)-*whl
 remove:
 	pip uninstall pmike
