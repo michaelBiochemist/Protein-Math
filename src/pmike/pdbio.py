@@ -21,6 +21,9 @@ Last modified: 07/19/2024
  For the column position tuple, since the postion starts count at zero, but is not inclusive on the right, the start position is 1 less than the position in the web page, but the end position is the same
  List is [data_type, (start, end), left_justify_bit]
 
+Updating to use spec from:
+    https://www.wwpdb.org/documentation/file-format-content/format33/sect9.html#ATOM
+
 
 TODO:
     Missing support for rows that start with anything other than "ATOM" or "HETATM", such as "HELIX", "SHEET", "TER", etc.
@@ -192,6 +195,8 @@ def write_crd(df,crdout='output.crd',comments=''):
     write_coordinate_file(df,crdout,comments,crd_spec)
 
 def write_pdb(df,pdbout='output.pdb',comments=''):
+    df['atname'] = df['atname'].apply(lambda x: ' ' + x if len(x) == 1 else x)
+
     if df.resnum.max() > 9999 or df.atnum.max() > 99999:
         print("WARNING: PDB file is > 99,999 atoms or >9,999 residues. Splitting output into multiple files")
         segids = df.segid.unique()
