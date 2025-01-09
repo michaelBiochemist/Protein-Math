@@ -38,9 +38,8 @@ def get_geometric_CA_center(df,segments=None,selection_criteria=None):
 
 def center_by_CA(df,segments=None,selection_criteria=None):
     center_current=get_geometric_CA_center(df,segments,selection_criteria)
-    #print(center_current)
     df[['x','y','z']]-=center_current
-    #return df
+    # Does not need a return value as this centers the dataframe passed in the argument (pass by reference)
 
 # Does not check that both proteins are identical before attempting the join.
 def relational(mapper):
@@ -101,6 +100,7 @@ def map_chains(df1,df2):
     if len(mapper)==0:
         raise VaueError('No matching segids found')
     return mapper
+
 def get_alignments(df1,df2,map_df,mode="global",match_score=2,mismatch_score=-1,
         gap_open=-10,gap_extend=-0.5):
     alignment_list = []
@@ -485,61 +485,58 @@ def assign_histidine_charge(df, cutoff=4.0):
 
     Returns:
         pd.DataFrame: DataFrame with updated 'resname' for histidines.
+
+    (Assumes hydrogens are not included in the PDB file, as it does not add or remove hydrogen atoms directly)
     """
-    charged_residues = {
-        'ASP': ['OD1', 'OD2'],
-        'GLU': ['OE1', 'OE2'],
-        'ARG': ['NH1', 'NH2', 'NE'],
-        'LYS': ['NZ']
-    }
 
     # Identify histidines
     histidines = df[df['resname'] == 'HIS']
-    updated_resnames = {}
+    if histidines.shape[0]==0:
+        return df
 
-    for _, his_row in histidines.iterrows():
-        his_resnum = his_row['resnum']
-        chain = his_row['chainid']
-        nd1_coords = df[(df['resnum'] == his_resnum) &
-                        (df['chainid'] == chain) &
-                        (df['atname'] == 'ND1')][['x', 'y', 'z']].values
-        ne2_coords = df[(df['resnum'] == his_resnum) &
-                        (df['chainid'] == chain) &
-                        (df['atname'] == 'NE2')][['x', 'y', 'z']].values
+    columns = ['atnum','resnum','chainid','resname','atname','x','y','z']
+    charged = df.loc[(df['resname'].isin(['ASP','GLU','ARG','LYS'])) & (df['atname'].isin(['OD1','OD2','OE1','OE2','NH1','NH2','NE','NZ'])),columns] # Isolate charged residues
+    if charged.shape[0] == 0:
+        df.loc[df['resname']=='HIS','resname'] = 'HSD'
+        return df
 
-        if len(nd1_coords) == 0 or len(ne2_coords) == 0:
-            continue  # Skip if ND1 or NE2 is missing
+    # Nearby acidic resiudes contribute +1 to protonation, whereas basic ones contribute -1
+    charged['interaction'] = np.where(charged['resname'].isin(['ARG', 'LYS']),-1,1)
+    merged = pd.merge(histidines,charged,how='cross',suffixes=['','_r'])
+    # Get distances and filter where distance is less than the cutoff
+    merged['dist']=np.linalg.norm(merged[['x','y','z']].values - merged[['x_r','y_r','z_r']].values, axis=1)
+    merged_filter=merged.loc[merged['dist']<=cutoff,['atnum','resnum','chainid','atname','dist','interaction']]
 
-        nd1_coords = nd1_coords[0]
-        ne2_coords = ne2_coords[0]
+    # Step 1: Aggregate interaction values for ND1 and NE2
+    interactions = (
+        merged_filter.groupby(['resnum', 'chainid', 'atname'])['interaction']
+        .sum()
+        .unstack(fill_value=0)  # Pivot 'atname' values (ND1, NE2) into columns
+    )
 
-        # Check proximity to charged residues
-        interactions_nd1 = 0
-        interactions_ne2 = 0
+    # Step 2: Compare summed interactions for ND1 and NE2
+    interactions['protonation'] = np.where(
+        interactions.get('ND1', 0) > interactions.get('NE2', 0),  # Compare ND1 vs NE2
+        'HSD',  # ND1 protonated
+        'HSE'   # NE2 protonated
+    )
 
-        for res, atoms in charged_residues.items():
-            charged_atoms = df[(df['resname'] == res) & (df['chainid'] == chain)]
+    # Step 3: Create mapping of (resnum, chainid) to protonation state
+    protonation_map = interactions['protonation'].to_dict()
+    # Step 4: Update histidines DataFrame with the new protonation states
+    histidines.loc[:,'resname'] = histidines.apply(
+        lambda row: protonation_map.get((row['resnum'], row['chainid']), 'HSD'),
+        axis=1
+    )
 
-            for _, charged_atom in charged_atoms.iterrows():
-                charged_coords = charged_atom[['x', 'y', 'z']].values
-                dist_to_nd1 = np.linalg.norm(nd1_coords - charged_coords)
-                dist_to_ne2 = np.linalg.norm(ne2_coords - charged_coords)
+    unique_histidines=histidines[['resnum','chainid','resname']].drop_duplicates()
 
-                if dist_to_nd1 < cutoff:
-                    interactions_nd1 += 1
-                if dist_to_ne2 < cutoff:
-                    interactions_ne2 += 1
+    # Final step: Update original dataframe with new Histidine residue names
+    df_merge = pd.merge(df,unique_histidines,how='left',on=['resnum','chainid'],suffixes=['','_r'])
+    df_merge.loc[df_merge['resname']=='HIS','resname']=df_merge.loc[df_merge['resname']=='HIS','resname_r']
+    df_merge.drop(columns=['resname_r'], inplace=True)
 
-        # Assign charge based on proximity
-        if interactions_nd1 > interactions_ne2:
-            updated_resnames[(his_resnum, chain)] = 'HSE'  # NE2 protonated
-        else:
-            updated_resnames[(his_resnum, chain)] = 'HSD'  # ND1 protonated
+    return df_merge
 
-    # Update the DataFrame
-    for (resnum, chain), new_resname in updated_resnames.items():
-        df.loc[(df['resnum'] == resnum) & (df['chainid'] == chain), 'resname'] = new_resname
-
-    return df
 
 #if __name__ == '__main__':
