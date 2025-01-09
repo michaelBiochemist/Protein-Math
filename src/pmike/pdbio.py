@@ -122,6 +122,8 @@ def read_cif(cif_file):
 
     # Create a pandas DataFrame from these columns
     data = {col: mmcif_dict.get(col, []) for col in atom_site_columns}
+    return data,mmcif_dict,atom_site_columns
+    print(data)
     df = pd.DataFrame(data)
 
     # Convert numeric columns to appropriate types
@@ -172,6 +174,10 @@ def read_coordinate_file(pdbfil, column_spec):
 def format_column(column, start, end,prev_end,ljust_bit,file_type):
     width = end - start
     fullwidth=end-prev_end
+    if column.name == 'occupancy':
+       return column.apply(lambda x: f"{float(x):0.2f}".rjust(fullwidth) if pd.notna(x) else '1.00'.rjust(fullwidth))
+    if column.name == 'tfactor':
+        return column.apply(lambda x: f"{float(x):0.2f}".rjust(fullwidth) if pd.notna(x) else '0.00'.rjust(fullwidth))
     if column.name in ['x', 'y', 'z']:
         if file_type == 'PDB':
             return column.apply(lambda x: f"{float(x):8.3f}".rjust(fullwidth) if pd.notna(x) else ''.rjust(fullwidth))
@@ -195,6 +201,7 @@ def write_crd(df,crdout='output.crd',comments=''):
     write_coordinate_file(df,crdout,comments,crd_spec)
 
 def write_pdb(df,pdbout='output.pdb',comments=''):
+    df = df.copy()
     df['atname'] = df['atname'].apply(lambda x: ' ' + x if len(x) == 1 else x)
 
     if df.resnum.max() > 9999 or df.atnum.max() > 99999:
