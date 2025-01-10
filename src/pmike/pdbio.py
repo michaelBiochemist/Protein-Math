@@ -105,33 +105,48 @@ def read_cif(cif_file):
     mmcif_dict = MMCIF2Dict(cif_file)
 
     # Extract relevant columns from the dictionary
-    atom_site_columns = [
-        "_atom_site.Cartn_x",
-        "_atom_site.Cartn_y",
-        "_atom_site.Cartn_z",
-        "_atom_site.group_PDB",
-        "_atom_site.id",
-        "_atom_site.type_symbol",
-        "_atom_site.label_atom_id",
-        "_atom_site.label_comp_id",
-        "_atom_site.label_seq_id",
-        "_atom_site.label_asym_id",
-        "_atom_site.occupancy",
-        "_atom_site.pdbx_formal_charge"
-    ]
+    column_dict = {
+            "_atom_site.Cartn_x":"x",
+            "_atom_site.Cartn_y":"y",
+            "_atom_site.Cartn_z":"z",
+            "_atom_site.group_PDB":"rowtype",
+            "_atom_site.id":"atnum",
+            "_atom_site.type_symbol":"element",
+            "_atom_site.label_atom_id":"atname",
+            "_atom_site.label_comp_id":"resname",
+        "_atom_site.label_seq_id":"resnum",
+        "_atom_site.label_asym_id":"chainid",
+        "_atom_site.occupancy":"occupancy",
+        "_atom_site.pdbx_formal_charge":"charge"
+    }
+    atom_site_columns = list(column_dict.keys())
+    # Check if column is present and if not throw error or warning depending on the column.
+    # Also throw error if present columns are not all of the same length.
+    col0_rownum = len(mmcif_dict[atom_site_columns[0]])
+    for col in atom_site_columns:
+        if col not in mmcif_dict.keys():
+            if col in ["_atom_site.occupancy", "_atom_site.pdbx_formal_charge"]:
+                print(f'Warning: column {col} not in mmcif dictionary')
+                atom_site_columns.remove(col)
+            else:
+                print(f'Error: important column {col} not in mmcif dictionary, this corresponds to PDB {column_dict[col]}')
+                return None # Throw error here when ready
+        elif col0_rownum != len(mmcif_dict[col]):
+            print(f'Error: row counts do not match between columns {atom_site_columns[0]}: {col0_rownum} and {col}: {len(mmcif_dict[col])}')
+            return None
 
     # Create a pandas DataFrame from these columns
     data = {col: mmcif_dict.get(col, []) for col in atom_site_columns}
-    return data,mmcif_dict,atom_site_columns
-    print(data)
     df = pd.DataFrame(data)
 
     # Convert numeric columns to appropriate types
     make_numeric_list = ["_atom_site.Cartn_x","_atom_site.Cartn_y","_atom_site.Cartn_z",
         "_atom_site.label_seq_id","_atom_site.occupancy","_atom_site.pdbx_formal_charge","_atom_site.id"]
     for make_numeric in make_numeric_list:
-        df[make_numeric] = pd.to_numeric(df[make_numeric],errors='coerce')
-
+        if make_numeric in atom_site_columns:
+            df[make_numeric] = pd.to_numeric(df[make_numeric],errors='coerce')
+        else:
+            df[make_numeric] = nan
 
     # Rename columns for easier readability
     df.columns = [
