@@ -48,10 +48,10 @@ pdb_spec = { # Column specification for PDB files
 	 "charge": ["str",(78,80),0]        # Charge
      }
 crd_spec = { # Columns specification for CHARMM extended CRD files
-        "atnum":['num',(0,10),0], # Atom no. sequential
-        "ires":['num',(11,20),0], # Residue Index - does not revert to 1 on multimers
-        "resname":['str',(22,30),1],
-        "atname":['str',(32,40),1],
+    "atnum":['num',(0,10),0], # Atom no. sequential
+    "ires":['num',(11,20),0], # Residue Index - does not revert to 1 on multimers
+    "resname":['str',(22,30),1],
+    "atname":['str',(32,40),1],
 	 "x": ["num",(42,60),0],		# "X coordinate"
 	 "y": ["num",(62,80),0],		# "Y coordinate"
 	 "z": ["num",(82,100),0],		# "Z coordinate"
@@ -68,7 +68,7 @@ def clean_coordinate_df(df,filetype=None):
     segids = df.segid.unique()
     chainids = df.chainid.unique()
 
-    if len(segids)==1 and pd.isnull(segids[0]) and (len(chainids)!=1 or not pd.isnull(chainids[0])):
+    if len(segids)==1 and (pd.isnull(segids[0]=='') or segids[0]=='') and (len(chainids)!=1 or not (pd.isnull(chainids[0]) or chainids[0]=='')):
         df.segid=df.chainid
 
     df['resnum']=df.groupby('segid')['resnum'].transform(lambda x: pd.factorize(x)[0] + 1)
@@ -168,7 +168,7 @@ def read_coordinate_file(pdbfil, column_spec):
     for cname in column_spec.keys():
         colspecs.append(column_spec[cname][1])
 
-    df = pd.read_fwf(pdbfil, colspecs=colspecs,header=None,names=list(column_spec.keys()), dtype=str)
+    df = pd.read_fwf(pdbfil, colspecs=colspecs,header=None,names=list(column_spec.keys()), dtype=str,keep_default_na=False)
     if "rowtype" in column_spec.keys():
         df=df.loc[df["rowtype"].isin(["ATOM","HETATM"])]
     elif "ires" in column_spec.keys():
