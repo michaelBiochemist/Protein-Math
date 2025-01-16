@@ -36,6 +36,12 @@ def get_geometric_CA_center(df,segments=None,selection_criteria=None):
 
     return df_CA[['x','y','z']].sum(axis=0)/df_CA[['x','y','z']].shape[0]
 
+def get_volume(df):
+    maxes = df[['x','y','z']].max()
+    mins  = df[['x','y','z']].min()
+    diffs = maxes-mins
+    return diffs['x']*diffs['y']*diffs['z']
+
 def center_by_CA(df,segments=None,selection_criteria=None):
     center_current=get_geometric_CA_center(df,segments,selection_criteria)
     df[['x','y','z']]-=center_current
