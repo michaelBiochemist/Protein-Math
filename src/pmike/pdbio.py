@@ -177,11 +177,20 @@ def read_coordinate_file(pdbfil, column_spec):
     else:
         return df
 
+    # Replace '*****' with incrementing numbers starting from 100000
+    max_atom_num = df[df['atnum'] != '*****']['atnum'].astype(int).max()
+    counter = max_atom_num + 1
+    df.loc[df['atnum']=='*****','atnum']=range(counter,len(df)+1)
+    #df['atnum'] = df['atnum'].apply(lambda x: str(counter) if x == '*****' else x)
+
     # Make numeric columns numeric
     numeric_columns = []
     for label in column_spec.keys():
         if column_spec[label][0] == "num":
             numeric_columns.append(label)
+
+
+
     df[numeric_columns]=df[numeric_columns].apply(pd.to_numeric)
     return df
 
