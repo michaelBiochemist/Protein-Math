@@ -200,9 +200,9 @@ def format_column(column, start, end,prev_end,ljust_bit,file_type):
     fullwidth=end-prev_end
     if column.name == 'occupancy':
        return column.apply(lambda x: f"{float(x):0.2f}".rjust(fullwidth) if pd.notna(x) else '1.00'.rjust(fullwidth))
-    if column.name == 'tfactor':
+    elif column.name == 'tfactor':
         return column.apply(lambda x: f"{float(x):0.2f}".rjust(fullwidth) if pd.notna(x) else '0.00'.rjust(fullwidth))
-    if column.name in ['x', 'y', 'z']:
+    elif column.name in ['x', 'y', 'z']:
         if file_type == 'PDB':
             return column.apply(lambda x: f"{float(x):8.3f}".rjust(fullwidth) if pd.notna(x) else ''.rjust(fullwidth))
         elif file_type == 'CRD':

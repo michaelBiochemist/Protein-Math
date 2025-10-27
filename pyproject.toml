@@ -6,11 +6,11 @@ build-backend = "setuptools.build_meta"
 name = "pmike"
 version = '0.0.4'
 authors = [
-	{name="Michael van Dyk",email="mv10g@fsu.edu"}
+	{name="Michael van Dyk",email="mvandyk@protonmail.com"}
 ]
 requires-python = ">=3.12"
-classifiers = ["boop"]
+classifiers = ["bioinformatics"]
 
 [project.urls]
-Homepage="science.party"
-Issues="science.party"
+Homepage="https://github.com/michaelBiochemist/Protein-Math"
+Issues="https://github.com/michaelBiochemist/Protein-Math/Issues"
